@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Grę otwierają anonimowo zalogowani goście z linkiem do pokoju.
+    // Kod pokoju ma 16 losowych znaków. Nie umożliwiamy listowania pokoi.
+    match /rooms/{roomId} {
+      function isGuest() {
+        return request.auth != null;
+      }
+      function validCode() {
+        return roomId.matches('^[A-Z2-9]{16}$');
+      }
+      function validPlayer(p) {
+        return p is map
+          && p.keys().hasAll(['id', 'name', 'points'])
+          && p.keys().hasOnly(['id', 'name', 'points'])
+          && p.id is string && p.id.size() >= 3 && p.id.size() <= 32
+          && p.name is string && p.name.size() > 0 && p.name.size() <= 24
+          && p.points is int && p.points >= 0 && p.points <= 999999;
+      }
+      function validPlayers(p) {
+        return p is list
+          && p.size() <= 6
+          && (p.size() < 1 || validPlayer(p[0]))
+          && (p.size() < 2 || validPlayer(p[1]))
+          && (p.size() < 3 || validPlayer(p[2]))
+          && (p.size() < 4 || validPlayer(p[3]))
+          && (p.size() < 5 || validPlayer(p[4]))
+          && (p.size() < 6 || validPlayer(p[5]));
+      }
+      function validRoom() {
+        return request.resource.data.keys().hasAll(['players','createdAt','updatedAt'])
+          && request.resource.data.keys().hasOnly(['players','createdAt','updatedAt'])
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.updatedAt is timestamp
+          && validPlayers(request.resource.data.players);
+      }
+      allow get: if isGuest() && validCode();
+      allow list: if false;
+      allow create: if isGuest() && validCode() && validRoom();
+      allow update: if isGuest() && validCode()
+        && request.resource.data.createdAt == resource.data.createdAt
+        && validRoom();
+      allow delete: if false;
+    }
+    // Brak dostępu do jakichkolwiek innych kolekcji.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
