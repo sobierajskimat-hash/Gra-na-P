@@ -124,6 +124,17 @@ button{font:inherit;cursor:pointer;} button:focus-visible{outline:3px solid #c8f
 .scores-note{font-size:12px;color:#99aacc;line-height:1.45;margin:14px 0 0}
 @media(max-width:360px){.scores-player{grid-template-columns:minmax(0,1fr)}.scores-buttons{justify-content:end}}
 @media(min-width:650px){.scores-overlay{align-items:center;padding:20px}.scores-dialog{border-bottom:1px solid #414f70;border-radius:24px;max-height:88dvh;padding-bottom:28px}}
+
+.online-room{border:1px solid #455472;border-radius:16px;padding:13px;background:#222b49;margin:12px 0 15px}
+.room-head{font-size:13px;font-weight:850;color:#d9e6fd;margin-bottom:9px}
+.room-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.room-row input{min-width:0;flex:1 1 130px;min-height:43px;background:#10172d;border:1px solid #566483;border-radius:12px;padding:9px 11px;color:#f6f7ff;font-size:14px;text-transform:uppercase}
+.room-row button{flex:1 1 auto;min-height:43px;border-radius:12px;border:1px solid #6e7f9b;background:#354361;color:#fff;padding:8px 11px;font-size:13px;font-weight:850}
+.room-row button.room-create{background:#cafa58;color:#172017;border-color:#cafa58}
+.room-row button:disabled{opacity:.45}
+.room-notice{font-size:12px;color:#aebedc;margin:10px 0 0;line-height:1.4;overflow-wrap:anywhere}
+.room-code{font-size:12px;color:#d2fd83;letter-spacing:.05em;font-weight:900;overflow-wrap:anywhere}
+.online-room button:focus-visible{outline:3px solid #cafa58;outline-offset:2px}
 </style>
 </head>
 <body>
@@ -208,6 +219,7 @@ button{font:inherit;cursor:pointer;} button:focus-visible{outline:3px solid #c8f
 <section id="scoresOverlay" class="scores-overlay" role="dialog" aria-modal="true" aria-labelledby="scoresTitle" hidden>
 <div class="scores-dialog">
  <div class="scores-head"><div><h2 id="scoresTitle">🏆 Tablica wyników</h2><p>Dodaj maksymalnie sześć osób. Przyznawaj i odejmuj punkty.</p></div><button id="scoresClose" class="scores-close" type="button" aria-label="Zamknij wyniki">×</button></div>
+ <div class="online-room" id="onlineRoomPanel"><div id="roomHead" class="room-head">Punktacja na różnych telefonach</div><div class="room-row" id="roomSetupRow"><button type="button" id="roomCreate" class="room-create" disabled>+ Utwórz pokój online</button><input id="roomJoinInput" placeholder="Kod pokoju" aria-label="Kod pokoju" maxlength="40" autocapitalize="characters"><button id="roomJoin" type="button" disabled>Dołącz</button></div><div class="room-row" id="roomActiveRow" hidden><span id="roomActiveCode" class="room-code"></span><button type="button" id="roomShare" class="room-create">Udostępnij link</button><button type="button" id="roomLeave">Wróć do lokalnej</button></div><p class="room-notice" id="roomNotice" role="status">Wspólna punktacja wymaga połączenia z bazą Firebase. Na razie działa zapis na tym telefonie.</p></div>
  <form id="scoresAddForm" class="scores-add" autocomplete="off"><input id="scoresNewName" type="text" maxlength="24" placeholder="Imię gracza" required aria-label="Imię gracza"><button id="scoresAddButton" type="submit">+ Dodaj</button></form>
  <div id="scoresList" class="scores-list"></div>
  <div class="scores-footer"><button id="scoresReset" class="scores-reset" type="button">Wyzeruj punkty</button><span id="scoresStatus" class="scores-status" role="status"></span></div>
@@ -220,6 +232,7 @@ const STARTER_WORDS = new Set(["Kot","Pies","Koń","Krowa","Świnia","Owca","Kur
 const $ = id => document.getElementById(id);
 
 const SCORE_KEY='powiedz-na-p-players-v1', MAX_PLAYERS=6;
+let onlineMode=false;
 let players=readPlayers(), scoreOpener=null, scorePaused=false, scoresCanSave=true;
 function readPlayers(){
  try{
@@ -230,6 +243,7 @@ function readPlayers(){
  }catch(e){return [];}
 }
 function persistScores(){
+ if(onlineMode)return;
  try{localStorage.setItem(SCORE_KEY,JSON.stringify(players));scoresCanSave=true}
  catch(e){scoresCanSave=false}
 }
@@ -239,7 +253,7 @@ function scoreUpdateSummary(){
  $('scoresAddButton').disabled=players.length>=MAX_PLAYERS;
  $('scoresNewName').disabled=players.length>=MAX_PLAYERS;
  $('scoresNewName').placeholder=players.length>=MAX_PLAYERS?'Limit sześciu graczy':'Imię gracza';
- $('scoresStatus').textContent=scoresCanSave?'Zapisano na telefonie':'Brak dostępu do zapisu na telefonie';
+ $('scoresStatus').textContent=onlineMode?'Synchronizowane na żywo':(scoresCanSave?'Zapisano na telefonie':'Brak dostępu do zapisu na telefonie');
 }
 function makeScoreButton(value,aria,action,id,extra=''){
  const b=document.createElement('button');b.type='button';b.textContent=value;
@@ -285,6 +299,7 @@ $('scoresOverlay').addEventListener('click',e=>{if(e.target===$('scoresOverlay')
 $('scoresAddForm').addEventListener('submit',e=>{
  e.preventDefault();const name=$('scoresNewName').value.trim().replace(/\s+/g,' ').slice(0,24);
  if(!name||players.length>=MAX_PLAYERS)return;
+ if(onlineMode){window.PRoom?.addPlayer(name);$('scoresNewName').value='';return;}
  if(players.some(p=>p.name.toLowerCase()===name.toLowerCase())){$('scoresStatus').textContent='To imię już istnieje';return}
  players.push({id:'p'+Date.now().toString(36)+Math.random().toString(36).slice(2,7),name,points:0});
  $('scoresNewName').value='';persistScores();renderScores();if(players.length<MAX_PLAYERS)$('scoresNewName').focus();
@@ -292,12 +307,14 @@ $('scoresAddForm').addEventListener('submit',e=>{
 $('scoresList').addEventListener('change',e=>{
  const id=e.target.dataset.rename;if(!id)return;const p=players.find(x=>x.id===id);if(!p)return;
  const name=e.target.value.trim().replace(/\s+/g,' ').slice(0,24);
+ if(onlineMode){window.PRoom?.rename(id,name);return;}
  if(name&&!players.some(x=>x.id!==id&&x.name.toLowerCase()===name.toLowerCase()))p.name=name;
  persistScores();renderScores();
 });
 $('scoresList').addEventListener('click',e=>{
  const b=e.target.closest('button[data-action]');if(!b)return;
  const p=players.find(x=>x.id===b.dataset.pid);if(!p)return;
+ if(onlineMode){if(b.dataset.action==='remove'&&!confirm('Usunąć gracza '+p.name+' wraz z jego punktami?'))return;window.PRoom?.change(p.id,b.dataset.action);return;}
  if(b.dataset.action==='plus')p.points=Math.min(999999,p.points+1);
  if(b.dataset.action==='minus')p.points=Math.max(0,p.points-1);
  if(b.dataset.action==='remove'){
@@ -309,9 +326,16 @@ $('scoresList').addEventListener('click',e=>{
 $('scoresReset').addEventListener('click',()=>{
  if(!players.some(p=>p.points))return;
  if(!confirm('Wyzerować wszystkie punkty? Imiona pozostaną.'))return;
+ if(onlineMode){window.PRoom?.reset();return;}
  players.forEach(p=>p.points=0);persistScores();renderScores();
 });
 renderScores();
+window.PScoreBridge={
+ getPlayers:()=>players.map(p=>({...p})),
+ receiveRoom:(next)=>{onlineMode=true;players=next;renderScores();},
+ leaveRoom:()=>{onlineMode=false;players=readPlayers();renderScores();},
+ isOnline:()=>onlineMode
+};
 
 const screens = ['home','game','end'];
 let difficulty = 'starter', duration = 0, deck = [], index = -1;
@@ -411,7 +435,7 @@ document.addEventListener('visibilitychange',()=>{
  else if(!deadline && secondsLeft>0){deadline=Date.now()+secondsLeft*1000;ticker=setInterval(updateTimer,200);updateTimer();}
 });
 // Udostępnianie działa z publicznym adresem po opublikowaniu gry.
-const gameUrl = () => window.location.href.split('#')[0].split('?')[0];
+const gameUrl = () => window.location.href.split('#')[0];
 const isPublicUrl = () => ['http:', 'https:'].includes(location.protocol) && !['localhost','127.0.0.1'].includes(location.hostname);
 const shareText = 'Powiedz na P! 🎮 Opisuj hasła używając tylko słów na P. Zagraj ze mną!';
 function shareFeedback(message){$('shareFeedback').textContent=message;}
@@ -439,5 +463,7 @@ if('serviceWorker' in navigator && (location.protocol==='https:' || location.hos
  window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 }
 </script>
+<script src="./firebase-config.js"></script>
+<script defer src="./online.js"></script>
 </body>
 </html>
